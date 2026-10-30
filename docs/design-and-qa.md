@@ -34,4 +34,14 @@ The existing Studio UI now uses the local Node API and PostgreSQL. A fresh datab
 
 Browser plugin not available; validation used the available Playwright connector in a fresh context. Its API calls were routed to an isolated test schema, leaving the real workspace empty. Flow: create customer → create project → create 90m entry → edit to 45m → reload and retain 45m → mark billed without rate or invoice reference → create and void another entry → inspect history. Page identity and meaningful content passed; no framework overlay, console errors, or page errors were observed. Screenshots were captured outside the repository at 1440×900 and 390×844; mobile had no horizontal overflow. These are Chromium checks, not physical-device Safari checks. The test context and API were closed and the schema removed.
 
-Authentication and Railway deployment remain unimplemented. The development API is loopback-only and rejects production mode until authentication is added.
+At this milestone authentication and Railway deployment were unimplemented. Authentication is covered by the subsequent verification below; Railway hosting remains pending.
+
+## Self-hosted authentication verification — 2026-10-30
+
+Better Auth 1.7.14 is installed locally with username and API-key plugins. Auth tables are generated in versioned migration `002_auth.sql`. Setup provisions `ruben` and `agent`; the public server does not allow signup, account editing, or key management. Password login, logout, database sessions, session expiry handling, and agent bearer-key access are connected to the existing API and audit identities. Private credentials are excluded from Git. Library telemetry is disabled.
+
+Integration verification covers anonymous rejection on every workspace resource, closed auth routes, wrong-password rejection, trusted-origin checks, cookie flags, session expiry and signing-secret changes, logout and password-reset revocation, hashed agent keys, key ownership, agent attribution, key expiry/rotation/revocation, login rate limits resistant to spoofed IP headers, and the original workspace operations. Tests use disposable schemas.
+
+Browser plugin not available; Playwright used a fresh context at 1440×900 and 390×844 with API traffic routed to a disposable authenticated test schema. Flow: anonymous visit to Settings → login screen → wrong password error → successful login → create customer → reload and retain customer/session → mobile logout → reload and confirm workspace stays hidden. No page exceptions or overflow were found. Expected 401 responses represent unauthenticated and incorrect-password checks. Login screenshots were captured outside the repository, and the isolated context, test server, and schema were removed. Chromium emulation only; physical-device Safari was not tested.
+
+The real local accounts were provisioned using the private password input; the raw agent key is in ignored `.env.agent`. Real workspace data was not used by browser tests. Production Railway hosting remains outside this change.

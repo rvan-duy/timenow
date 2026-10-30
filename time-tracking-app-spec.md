@@ -206,39 +206,20 @@ The audit log should not itself be editable from the application UI.
 
 ## Authentication
 
-### Human UI
+Use Better Auth as a library inside our Node backend, backed by our PostgreSQL database. Accounts are self-hosted; no external identity provider, social login, or hosted account service is configured. Telemetry is disabled.
 
-For the initial version, simple password protection is sufficient.
+There are two identities sharing one workspace:
 
-Recommended behavior:
+- `ruben`: username/password login with a server-validated session cookie.
+- `agent`: API-only access using a separate revocable key; no password login.
 
-1. User enters the app password.
-2. Server creates an authenticated session cookie.
-3. All app pages and mutation endpoints require an authenticated session.
+The server resolves the authenticated identity to its audit actor. Clients cannot choose or override that actor. Both identities initially have access to the same domain operations.
 
-Do not expose the password directly to browser JavaScript after login.
+Accounts are provisioned through an operator-only setup command. Public signup and HTTP account/key management are closed. Password hashing and session mechanics belong to Better Auth. Sessions expire after seven days; cookies are HTTP-only, SameSite=Lax, and Secure over HTTPS. Browser mutations require a trusted origin. Login attempts are rate-limited with PostgreSQL counters. Password reset through the operator command revokes existing sessions.
 
-### Agent API Access
+Agents send `Authorization: Bearer <agent-key>`. Generated keys are hashed in PostgreSQL, expire after one year, and can be rotated through an operator command. Rotation revokes older keys. Key material is kept in a private secret store or ignored local handoff file, never in Git or browser JavaScript. Credentials are validated server-side on every request.
 
-Agents should use API keys rather than sharing the human UI password.
-
-Example:
-
-```http
-Authorization: Bearer <agent-specific-api-key>
-```
-
-Each API key should have its own identity so audit events can attribute actions correctly.
-
-Example configuration:
-
-```text
-TIME_TRACKER_PASSWORD=...
-AGENT_API_KEY_INVOICE=...
-AGENT_API_KEY_CODING=...
-```
-
-Keys should be stored in environment variables and never committed to the repository.
+See the README for setup and recovery commands. Railway hosting and its HTTPS/proxy configuration remain separate deployment work.
 
 ## API
 
@@ -612,7 +593,7 @@ This is a small private app, but it contains billing data and agent credentials.
 Minimum requirements:
 
 - HTTPS only in production.
-- Passwords and API keys stored only as secrets/environment variables.
+- Store password and API-key hashes in PostgreSQL; keep signing secrets and raw key material private and outside Git.
 - Secure, HTTP-only session cookies.
 - API keys compared server-side.
 - Rate-limit authentication endpoints.

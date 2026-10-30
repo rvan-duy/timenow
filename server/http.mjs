@@ -1,5 +1,7 @@
 import { createServer } from 'node:http';
 import { ZodError } from 'zod';
+import { toNodeHandler } from 'better-auth/node';
+import { authenticate } from './auth.mjs';
 import { AppError, readWorkspace, saveRecord, logTime, logTimeBulk, changeTime, markEntriesBilled } from './workspace.mjs';
 
 async function readBody(req) {
@@ -11,22 +13,37 @@ async function readBody(req) {
   }
   try { return JSON.parse(body); } catch { throw new AppError(400,'Invalid JSON.'); }
 }
-export function createApi(pool, { actor = 'ruben', allowedOrigins = ['http://localhost:5173','http://127.0.0.1:5173'] } = {}) {
+export function createApi(pool, { auth, allowedOrigins = ['http://localhost:5173','http://127.0.0.1:5173'] } = {}) {
+  if (!auth) throw new Error('Authentication is required.');
+  const authHandler = toNodeHandler(auth);
   return createServer(async (req,res) => {
     res.setHeader('Content-Type','application/json');
     res.setHeader('Cache-Control','no-store');
     res.setHeader('X-Content-Type-Options','nosniff');
     const send = (status,data) => { res.writeHead(status); res.end(JSON.stringify(data)); };
     try {
-      // This unauthenticated development server is bound to loopback only.
+      // The development server is bound to loopback; all workspace access also requires authentication.
       // Reject cross-site requests, including DNS rebinding via an unexpected Host.
       if (!/^((localhost|127\.0\.0\.1)(:\d+)?)$/.test(req.headers.host || '')) throw new AppError(403,'Local access only.');
       if (req.headers.origin && !allowedOrigins.includes(req.headers.origin)) throw new AppError(403,'Origin not allowed.');
       if (req.headers['sec-fetch-site'] === 'cross-site') throw new AppError(403,'Cross-site access denied.');
       const url = new URL(req.url,'http://localhost');
       const path = url.pathname;
+      if (req.method === 'GET' && path === '/api/health') {
+        await pool.query('SELECT 1'); return send(200,{status:'ok',database:'connected'});
+      }
+      if (path.startsWith('/api/auth/')) {
+        const permitted = (req.method === 'POST' && ['/api/auth/sign-in/username','/api/auth/sign-out'].includes(path)) || (req.method === 'GET' && path === '/api/auth/get-session');
+        if (!permitted) throw new AppError(404,'Endpoint not found.');
+        if (req.method === 'POST' && !allowedOrigins.includes(req.headers.origin)) throw new AppError(403,'A trusted Origin is required.');
+        req.headers['x-timenow-client-ip'] = req.socket.remoteAddress;
+        return await authHandler(req,res);
+      }
+      const identity = await authenticate(auth,pool,req);
+      const actor = identity.actor;
+      if (identity.kind === 'human' && req.method !== 'GET' && !allowedOrigins.includes(req.headers.origin)) throw new AppError(403,'A trusted Origin is required.');
+      if (req.method === 'GET' && path === '/api/me') return send(200,{actor,kind:identity.kind});
       if (req.method === 'GET') {
-        if (path === '/api/health') { await pool.query('SELECT 1'); return send(200,{status:'ok',database:'connected'}); }
         const statePaths = {'/api/customers':'customers','/api/projects':'projects','/api/time-entries':'entries','/api/history':'history'};
         if (path === '/api/workspace') return send(200,await readWorkspace(pool));
         if (statePaths[path]) {

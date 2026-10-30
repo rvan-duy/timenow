@@ -8,6 +8,7 @@ async function request(path: string, options?: RequestInit) {
   try { response = await fetch(`/api${path}`, options); }
   catch { throw new Error("Cannot reach the server. Check the connection and reload before retrying."); }
   const data = await response.json().catch(() => ({}));
+  if (response.status === 401) window.dispatchEvent(new Event("timenow:unauthorized"));
   if (!response.ok) throw new Error(data.error || "The server could not complete the request.");
   return data;
 }

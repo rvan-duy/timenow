@@ -4,7 +4,10 @@ import {
   FileText,
   History,
   Settings2,
+  LogOut,
 } from "lucide-react";
+import { useState } from "react";
+import { useAuth } from "../lib/auth";
 import type { Page } from "../lib/model";
 import { duration, effectiveRate, longDate, money, TODAY } from "../lib/model";
 import { useWorkspace } from "../lib/useWorkspace";
@@ -63,6 +66,15 @@ function Summary() {
   );
 }
 export function AppShell({ page }: { page: Page }) {
+  const { signOut } = useAuth();
+  const { notify } = useWorkspace();
+  const [signingOut, setSigningOut] = useState(false);
+  async function logout() {
+    setSigningOut(true);
+    try { await signOut(); }
+    catch (error) { notify(error instanceof Error ? error.message : "Could not sign out."); }
+    finally { setSigningOut(false); }
+  }
   const title = navigation.find((n) => n.id === page)!.label;
   const subtitle = {
     today: longDate,
@@ -96,6 +108,7 @@ export function AppShell({ page }: { page: Page }) {
             <strong>Ruben</strong>
             <span>Personal workspace</span>
           </div>
+          <button className="icon-button sign-out" type="button" aria-label="Sign out" title="Sign out" disabled={signingOut} onClick={() => void logout()}><LogOut size={18} /></button>
         </div>
       </header>
       <main

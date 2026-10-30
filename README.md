@@ -11,7 +11,7 @@ docker --context colima start timenow-postgres
 npm run dev
 ```
 
-Open [localhost:5173](http://localhost:5173). Node 26 is used for development. `npm run dev` starts the API on loopback port 3001 and Vite on loopback port 5173; Vite proxies `/api` to the backend. Database migrations run automatically before the API starts. Configure `.env` and create the database container first on a fresh machine (see below).
+Open [localhost:5173](http://localhost:5173). Node 26 is used for development. `npm run dev` starts the API on loopback port 3001 and Vite on loopback port 5173; Vite proxies `/api` to the backend. Database migrations run automatically before the API starts. Configure `.env`, create the database container, and run the account setup below first on a fresh machine. Existing installations only need `npm run dev`.
 
 ```sh
 npm run build
@@ -31,7 +31,7 @@ Desktop uses a side rail and a ledger beside the form. Mobile puts the form firs
 
 All four screens now read and write PostgreSQL through the local API. A new database starts empty: add a customer and project in Settings, then log time. Browser-local prototype records are left untouched and are not imported automatically.
 
-This is a local development app. Password sessions and agent API keys are not implemented yet; the backend uses the server-configured local actor (`ruben` by default), binds only to loopback, rejects cross-site requests, and refuses to start with `NODE_ENV=production`. Authentication and production hosting remain prerequisites for Railway deployment. Invoice creation stays in the external invoicing tool. See the [app spec](time-tracking-app-spec.md) for the agreed scope.
+This is a local development app with self-hosted Better Auth. Your password login and the agent API key both resolve to server-owned audit identities. Accounts and sessions live in PostgreSQL; no external account service is configured, and Better Auth telemetry is explicitly disabled. The server still binds to loopback and refuses production mode until Railway hosting is configured. Invoice creation stays in the external invoicing tool. See the [app spec](time-tracking-app-spec.md) for the agreed scope.
 
 ## Local database
 
@@ -57,6 +57,33 @@ For later sessions, use `colima start` and `docker --context colima start timeno
 
 Open a SQL shell with `docker --context colima exec -it timenow-postgres psql -U timenow -d timenow`. Railway will supply a separate production `DATABASE_URL` when deployed.
 
+## Authentication
+
+The fixed identities are `ruben` (browser password login) and `agent` (API key only). Both share the same workspace and domain operations. Public signup, email login, social providers, account editing, email-based password reset, and HTTP API-key management are unavailable. The `.invalid` email addresses in the auth tables are internal placeholders; no email service is configured.
+
+On first setup, supply a private file containing the exact login password (12–128 characters, with no added newline):
+
+```sh
+npm run auth:setup -- --password-file /absolute/path/to/private-password-file
+```
+
+The command applies migrations, generates `BETTER_AUTH_SECRET` in the ignored `.env` if absent, provisions the accounts, and writes a generated agent key into ignored `.env.agent`. Both files are owner-readable/writable only. It never prints credentials. Re-running setup preserves the existing password and valid agent key. Provisioning runs only in the operator command; the running HTTP server always has signup disabled. Remove a temporary password file when finished; the app does not need it at runtime.
+
+Sign in at [localhost:5173](http://localhost:5173) with username `ruben`. Both local loopback hostnames work. Better Auth handles password hashing using its default scrypt implementation and session cookie signing/verification. Sessions expire after seven days, are checked against PostgreSQL on every request, and are revoked on logout. Cookies are HttpOnly and SameSite=Lax, with Secure enabled for HTTPS. No browser token storage or session cookie cache is used. Session expiry returns the UI to login.
+
+All workspace APIs require a valid browser session or `Authorization: Bearer <agent-key>`. Only `/api/health` is public. Browser mutations require a trusted Origin. The HTTP auth surface is limited to username sign-in, session inspection, and sign-out; key creation/rotation remain operator commands. Login is limited to five attempts per minute per connecting IP with counters in PostgreSQL. Incoming IP headers are replaced with the direct socket address, so clients cannot spoof that limiter. Agent keys expire after one year and allow 120 requests per minute. The agent has no password credential or browser session access.
+
+Use a trusted operator shell to reset the password or rotate the agent key:
+
+```sh
+npm run auth:reset-password -- --password-file /absolute/path/to/private-password-file
+npm run auth:rotate-agent-key
+```
+
+Password reset revokes all browser sessions. Key rotation writes the replacement to `.env.agent` and disables prior agent keys. The generated key is hashed in PostgreSQL; the private file is its local handoff copy. Load it into the agent's secret store rather than committing it or placing it in a URL. Database credentials and auth secrets must never have a `VITE_` prefix.
+
+Railway deployment remains separate work: configure a production HTTPS origin, a separate signing secret, production database/accounts, trusted proxy handling, and app hosting before lifting the local-only startup restriction.
+
 ## Backend behavior
 
 - SQL migrations live in `db/migrations/`. Run `npm run db:migrate` explicitly if needed; applied migrations are tracked and startup is safe to repeat.
@@ -70,6 +97,10 @@ API routes currently used by the app:
 
 ```text
 GET    /api/health
+GET    /api/me
+POST   /api/auth/sign-in/username
+GET    /api/auth/get-session
+POST   /api/auth/sign-out
 GET    /api/workspace
 GET    /api/customers, /api/projects, /api/time-entries, /api/history
 POST   /api/customers, /api/projects, /api/time-entries
@@ -80,7 +111,7 @@ GET    /api/billing-batches
 POST   /api/billing-batches
 ```
 
-`GET /api/workspace` returns a consistent snapshot for the small workspace. Time-entry list filters include `status`, `customerId`, `projectId`, `from`, and `to`. History supports actor/customer/project/date filters. Bulk creation is atomic. This is the initial API surface; authenticated agent access and pagination can follow.
+`GET /api/workspace` returns a consistent snapshot for the small workspace. Time-entry list filters include `status`, `customerId`, `projectId`, `from`, and `to`. History supports actor/customer/project/date filters. Bulk creation is atomic. Authenticated agent access uses this same API surface; pagination can follow.
 
 ## Structure
 

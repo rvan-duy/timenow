@@ -1,22 +1,30 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import pg from 'pg';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes } from 'node:crypto';
 import { migrate } from './db.mjs';
 import { createApi } from './http.mjs';
+import { createAuth } from './auth.mjs';
+import { provisionAccounts } from './auth-setup.mjs';
 
 // Use a disposable schema, never the workspace's actual tables.
 const schema = `test_${randomUUID().replaceAll('-','')}`;
 const admin = new pg.Pool({connectionString:process.env.DATABASE_URL});
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL,options:`-c search_path=${schema},public`});
-let server, base;
+let server, base, cookie;
+const authConfig = {secret:randomBytes(48).toString('hex')};
+const password = randomBytes(24).toString('hex');
 before(async () => {
   await admin.query(`CREATE SCHEMA ${schema}`);
   await migrate(pool);
   await migrate(pool); // Re-running migrations preserves data and does not fail.
-  server = createApi(pool);
+  await provisionAccounts(pool,createAuth(pool,{...authConfig,provisioning:true}),password);
+  server = createApi(pool,{auth:createAuth(pool,authConfig)});
   await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
   base = `http://127.0.0.1:${server.address().port}/api`;
+  const response = await fetch(base+'/auth/sign-in/username',{method:'POST',headers:{'Content-Type':'application/json',Origin:'http://localhost:5173'},body:JSON.stringify({username:'ruben',password})});
+  assert.equal(response.status,200);
+  cookie = response.headers.getSetCookie().map(value => value.split(';')[0]).join('; ');
 });
 after(async () => {
   if (server) await new Promise(resolve => server.close(resolve));
@@ -25,7 +33,7 @@ after(async () => {
   await admin.end();
 });
 async function api(path,method='GET',body,expected=200,headers={}) {
-  const response = await fetch(base+path,{method,headers:{'Content-Type':'application/json',...headers},...(body === undefined ? {} : {body:JSON.stringify(body)})});
+  const response = await fetch(base+path,{method,headers:{'Content-Type':'application/json',Cookie:cookie,Origin:'http://localhost:5173',...headers},...(body === undefined ? {} : {body:JSON.stringify(body)})});
   const data = await response.json();
   assert.equal(response.status,expected,JSON.stringify(data));
   return data;
@@ -90,7 +98,7 @@ test('billing rejects mixed customers, locks billed entries and prevents concurr
   const before = await api('/billing-batches');
   await api('/billing-batches','POST',{entryIds:[a.id,b.id]},400);
   assert.equal((await api('/billing-batches')).length,before.length);
-  const results = await Promise.all([1,2].map(() => fetch(base+'/billing-batches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({entryIds:[a.id]})})));
+  const results = await Promise.all([1,2].map(() => fetch(base+'/billing-batches',{method:'POST',headers:{'Content-Type':'application/json',Cookie:cookie,Origin:'http://localhost:5173'},body:JSON.stringify({entryIds:[a.id]})})));
   assert.deepEqual(results.map(r => r.status).sort(),[201,409]);
   const saved = (await api('/workspace')).entries.find(row => row.id === a.id);
   assert.equal(saved.status,'billed');

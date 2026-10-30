@@ -1431,3 +1431,14 @@ h3 {
 }
 
 .connection-state { max-width: 520px; margin: 15vh auto; padding: 24px; font-family: Inter, sans-serif; }
+
+.login-page { --bg: #fafaff; --surface: #fff; --border: #e1e4ed; --muted: #777e98; --accent: #635bdf; min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: var(--bg); }
+.login-card { width: 100%; max-width: 420px; padding: 36px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+.login-card .brand { margin-bottom: 32px; }
+.login-card h1 { font-size: 27px; letter-spacing: -0.7px; margin-bottom: 8px; }
+.login-card > p { font-size: 14px; line-height: 1.6; }
+.login-form { display: grid; gap: 22px; margin-top: 28px; }
+.profile .sign-out { margin-left: auto; flex-shrink: 0; }
+@media (max-width: 480px) { .login-page { padding: 18px; } .login-card { padding: 28px 24px; } }
+
+.login-card .brand svg { color: var(--accent); }

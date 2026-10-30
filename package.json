@@ -10,11 +10,16 @@
     "dev:api": "node --env-file=.env --watch server/index.mjs",
     "dev:web": "vite --host 127.0.0.1 --strictPort",
     "db:migrate": "node --env-file=.env server/db.mjs",
-    "test:integration": "node --env-file=.env --test server/workspace.test.mjs"
+    "test:integration": "node --env-file=.env --test server/*.test.mjs",
+    "auth:setup": "node --env-file=.env server/auth-setup.mjs setup",
+    "auth:reset-password": "node --env-file=.env server/auth-setup.mjs reset-password",
+    "auth:rotate-agent-key": "node --env-file=.env server/auth-setup.mjs rotate-agent-key"
   },
   "dependencies": {
+    "@better-auth/api-key": "1.7.14",
     "@fontsource/inter": "^5.2.8",
     "@radix-ui/themes": "^3.3.0",
+    "better-auth": "1.7.14",
     "lucide-react": "^0.577.0",
     "pg": "^8.23.1",
     "react": "^19.3.1",

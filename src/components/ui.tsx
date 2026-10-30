@@ -14,7 +14,8 @@ export type FieldProps = {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
-  type?: "text" | "date" | "number";
+  type?: "text" | "date" | "number" | "password";
+  autoComplete?: string;
   multiline?: boolean;
   required?: boolean;
   options?: { value: string; label: string }[];
@@ -41,6 +42,7 @@ export function Field(p: FieldProps) {
     value: p.value,
     placeholder: p.placeholder,
     required: p.required,
+    autoComplete: p.autoComplete,
     "aria-describedby": p.error ? `${p.id}-error` : undefined,
     "aria-invalid": !!p.error,
   };

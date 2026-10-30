@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Theme } from "@radix-ui/themes";
 import { AppShell } from "./components/AppShell";
+import { AuthProvider } from "./lib/auth";
 import { WorkspaceProvider } from "./lib/store";
 import type { Page } from "./lib/model";
 
@@ -48,16 +49,10 @@ function Workspace() {
 
 export default function App() {
   return (
-    <WorkspaceProvider>
-      <Theme
-        appearance="light"
-        accentColor="iris"
-        grayColor="slate"
-        radius="medium"
-        scaling="100%"
-      >
-        <Workspace />
-      </Theme>
-    </WorkspaceProvider>
+    <Theme appearance="light" accentColor="iris" grayColor="slate" radius="medium" scaling="100%">
+      <AuthProvider>
+        <WorkspaceProvider><Workspace /></WorkspaceProvider>
+      </AuthProvider>
+    </Theme>
   );
 }
