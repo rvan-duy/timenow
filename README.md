@@ -31,7 +31,7 @@ Desktop uses a side rail and a ledger beside the form. Mobile puts the form firs
 
 All four screens now read and write PostgreSQL through the local API. A new database starts empty: add a customer and project in Settings, then log time. Browser-local prototype records are left untouched and are not imported automatically.
 
-This is a local development app with self-hosted Better Auth. Your password login and the agent API key both resolve to server-owned audit identities. Accounts and sessions live in PostgreSQL; no external account service is configured, and Better Auth telemetry is explicitly disabled. The server still binds to loopback and refuses production mode until Railway hosting is configured. Invoice creation stays in the external invoicing tool. See the [app spec](time-tracking-app-spec.md) for the agreed scope.
+This app uses self-hosted Better Auth. Your password login and the agent API key both resolve to server-owned audit identities. Accounts and sessions live in PostgreSQL; no external account service is configured, and Better Auth telemetry is explicitly disabled. Development binds to loopback. Production serves the frontend and API together behind Railway HTTPS. Invoice creation stays in the external invoicing tool. See the [app spec](time-tracking-app-spec.md) for the agreed scope.
 
 ## Local database
 
@@ -82,7 +82,7 @@ npm run auth:rotate-agent-key
 
 Password reset revokes all browser sessions. Key rotation writes the replacement to `.env.agent` and disables prior agent keys. The generated key is hashed in PostgreSQL; the private file is its local handoff copy. Load it into the agent's secret store rather than committing it or placing it in a URL. Database credentials and auth secrets must never have a `VITE_` prefix.
 
-Railway deployment remains separate work: configure a production HTTPS origin, a separate signing secret, production database/accounts, trusted proxy handling, and app hosting before lifting the local-only startup restriction.
+Production deployment and account provisioning are described below.
 
 ## Backend behavior
 
@@ -120,7 +120,35 @@ POST   /api/billing-batches
 - `src/components/TimeForm.tsx` and `Entries.tsx` — time-entry workflow.
 - `src/pages/` — Unbilled, History, and Settings.
 - `src/lib/` — shared types, calculations, and API-backed workspace state.
-- `server/` — local HTTP API, database connections, domain operations, and integration tests.
+- `server/` — HTTP API, database connections, domain operations, and integration tests.
 - `db/migrations/` — versioned PostgreSQL schema.
 
 The selected visual reference is [Studio](docs/concepts/studio.png). Current rendered previews and verification details are in [design and QA notes](docs/design-and-qa.md).
+
+## Railway deployment
+
+TimeNow shares the `observant-cat` Railway project with Actual Budget. It has its own `timenow` app service and `Postgres` database; budget data remains in the budget service's `/data` volume.
+
+- App: https://timenow-production.up.railway.app
+- GitHub source: `rvan-duy/timenow`, branch `main`.
+- The root Dockerfile builds Vite and installs runtime dependencies in a separate stage. The container runs as the unprivileged `node` user. No environment files or credentials enter the build context.
+- The Node server listens on `0.0.0.0:$PORT`, serves `dist/`, and applies database migrations under a PostgreSQL advisory lock before listening. Hash routes continue to work on the same origin.
+- App settings: port `3001`, readiness path `/api/health`, healthcheck timeout `120` seconds, one replica, restart on failure. Readiness checks database connectivity; Railway probes use their own hostname.
+- App variables: `DATABASE_URL=${{Postgres.DATABASE_URL}}`, `BETTER_AUTH_URL=https://timenow-production.up.railway.app` (no trailing slash), a separate random `BETTER_AUTH_SECRET` of at least 32 characters, `PORT=3001`, and `TRUST_RAILWAY_PROXY=true`. `NODE_ENV=production` is set in the image.
+- Railway terminates HTTPS. The auth URL is fixed rather than inferred from forwarded headers. Production cookies are Secure and HttpOnly, and requests require the configured Host and trusted browser Origin. Proxy mode uses Railway's overwritten `X-Real-IP` for login limits; enable it only behind Railway's HTTPS edge, with no separate public TCP proxy for the app. Client-supplied `X-Forwarded-For` and `X-Timenow-Client-IP` are ignored.
+- PostgreSQL uses its own persistent volume. The app needs no volume. Enable scheduled database-volume backups in Railway and keep periodic `pg_dump` backups outside Railway. Before a schema-changing deployment, take a database backup; restoring an older image alone does not revert migrations.
+
+For a fresh environment, create the database and app service, set the variables and healthcheck settings, deploy, then provision the fixed accounts using the operator command. The public server has no signup route, so opening the domain cannot claim an account. A new production workspace is empty; local development data is not imported.
+
+Provisioning runs inside the deployed service with its production environment. Upload a private password file to `/tmp/timenow-password` using `railway service files upload`, then run:
+
+```sh
+railway ssh --service timenow -- env TIMENOW_AGENT_KEY_FILE=/tmp/timenow-agent-key \
+  node server/auth-setup.mjs setup --password-file /tmp/timenow-password
+```
+
+Download `/tmp/timenow-agent-key` with `railway service files download` into ignored `.env.railway-agent`, set its local permissions to `0600`, and preserve it in your password manager. Remove both temporary remote files immediately after provisioning. The production command requires an existing signing secret and does not generate one in `.env`. Password resets and key rotations use the same operator command with `reset-password` or `rotate-agent-key`; keep `TIMENOW_AGENT_KEY_FILE` pointed at a private writable path when rotating. Never use the local database or local signing secret for production operations.
+
+Push updates to `main` to deploy through the connected GitHub source. Dependabot checks the pinned Node Docker image weekly. Confirm `/api/health`, login, and a saved entry after deployments; verify the entry remains after a restart.
+
+Railway references: [Dockerfiles](https://docs.railway.com/builds/dockerfiles), [healthchecks](https://docs.railway.com/deployments/healthchecks), [edge headers](https://docs.railway.com/networking/public-networking/specs-and-limits).

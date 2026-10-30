@@ -43,24 +43,26 @@ export async function rotateAgentKey(pool, auth, save) {
 }
 async function ensureSecret() {
   if (process.env.BETTER_AUTH_SECRET) return;
+  if (process.env.NODE_ENV === 'production') throw new Error('Set BETTER_AUTH_SECRET before production provisioning.');
   const secret = randomBytes(48).toString('base64url');
   await appendFile('.env', `\nBETTER_AUTH_SECRET=${secret}\n`, {mode:0o600});
   await chmod('.env',0o600);
   process.env.BETTER_AUTH_SECRET = secret;
 }
 async function saveKey(key) {
-  const temporary = '.env.agent.tmp';
+  const destination = process.env.TIMENOW_AGENT_KEY_FILE || '.env.agent';
+  const temporary = destination + '.tmp';
   try {
     await writeFile(temporary,`TIMENOW_AGENT_API_KEY=${key}\n`,{mode:0o600,flag:'wx'});
-    await rename(temporary,'.env.agent');
+    await rename(temporary,destination);
   } catch (error) { await unlink(temporary).catch(() => {}); throw error; }
 }
 async function main() {
   const command = process.argv[2] || 'setup';
   if (!['setup','reset-password','rotate-agent-key'].includes(command)) throw new Error('Unknown setup command.');
   const passwordIndex = process.argv.indexOf('--password-file');
-  const password = command === 'rotate-agent-key' ? null : await readFile(process.argv[passwordIndex+1] || '', 'utf8');
   if (command !== 'rotate-agent-key' && passwordIndex < 0) throw new Error('Supply --password-file with the path to a private password file.');
+  const password = command === 'rotate-agent-key' ? null : await readFile(process.argv[passwordIndex+1] || '', 'utf8');
   await ensureSecret();
   const pool = createPool();
   const lock = await pool.connect();
@@ -71,10 +73,10 @@ async function main() {
     if (command === 'setup') {
       await provisionAccounts(pool,auth,password);
       let keyFileExists = false;
-      try { await readFile('.env.agent'); keyFileExists = true; } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      try { await readFile(process.env.TIMENOW_AGENT_KEY_FILE || '.env.agent'); keyFileExists = true; } catch (error) { if (error.code !== 'ENOENT') throw error; }
       const activeKeys = await pool.query('SELECT id FROM auth_api_key WHERE enabled=true AND "expiresAt">now()');
       if (!keyFileExists || activeKeys.rowCount === 0) await rotateAgentKey(pool,auth,saveKey);
-      console.log('Accounts ready: ruben (password) and agent (API key). Agent key is in private .env.agent.');
+      console.log('Accounts ready: ruben (password) and agent (API key). Agent key saved to the private key file.');
     } else if (command === 'reset-password') {
       await resetPassword(pool,auth,password);
       console.log('Password updated; existing browser sessions revoked.');

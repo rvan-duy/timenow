@@ -1,4 +1,6 @@
 import { createServer } from 'node:http';
+import { isIP } from 'node:net';
+import { serveStatic } from './static.mjs';
 import { ZodError } from 'zod';
 import { toNodeHandler } from 'better-auth/node';
 import { authenticate } from './auth.mjs';
@@ -13,7 +15,7 @@ async function readBody(req) {
   }
   try { return JSON.parse(body); } catch { throw new AppError(400,'Invalid JSON.'); }
 }
-export function createApi(pool, { auth, allowedOrigins = ['http://localhost:5173','http://127.0.0.1:5173'] } = {}) {
+export function createApi(pool, { auth, allowedOrigins = ['http://localhost:5173','http://127.0.0.1:5173'], production = false, staticDirectory, trustRailwayProxy = false } = {}) {
   if (!auth) throw new Error('Authentication is required.');
   const authHandler = toNodeHandler(auth);
   return createServer(async (req,res) => {
@@ -22,21 +24,27 @@ export function createApi(pool, { auth, allowedOrigins = ['http://localhost:5173
     res.setHeader('X-Content-Type-Options','nosniff');
     const send = (status,data) => { res.writeHead(status); res.end(JSON.stringify(data)); };
     try {
-      // The development server is bound to loopback; all workspace access also requires authentication.
-      // Reject cross-site requests, including DNS rebinding via an unexpected Host.
-      if (!/^((localhost|127\.0\.0\.1)(:\d+)?)$/.test(req.headers.host || '')) throw new AppError(403,'Local access only.');
-      if (req.headers.origin && !allowedOrigins.includes(req.headers.origin)) throw new AppError(403,'Origin not allowed.');
-      if (req.headers['sec-fetch-site'] === 'cross-site') throw new AppError(403,'Cross-site access denied.');
       const url = new URL(req.url,'http://localhost');
       const path = url.pathname;
+      // Health probes use Railway's own Host, and expose no workspace data.
       if (req.method === 'GET' && path === '/api/health') {
         await pool.query('SELECT 1'); return send(200,{status:'ok',database:'connected'});
       }
+      const host = req.headers.host || '';
+      const validHost = production
+        ? allowedOrigins.some(origin => new URL(origin).host === host)
+        : /^((localhost|127\.0\.0\.1)(:\d+)?)$/.test(host);
+      if (!validHost) throw new AppError(403,'Host not allowed.');
+      if (req.headers.origin && !allowedOrigins.includes(req.headers.origin)) throw new AppError(403,'Origin not allowed.');
+      if (req.headers['sec-fetch-site'] === 'cross-site') throw new AppError(403,'Cross-site access denied.');
+      if (staticDirectory && path !== '/api' && !path.startsWith('/api/')) return await serveStatic(req,res,path,staticDirectory);
       if (path.startsWith('/api/auth/')) {
         const permitted = (req.method === 'POST' && ['/api/auth/sign-in/username','/api/auth/sign-out'].includes(path)) || (req.method === 'GET' && path === '/api/auth/get-session');
         if (!permitted) throw new AppError(404,'Endpoint not found.');
         if (req.method === 'POST' && !allowedOrigins.includes(req.headers.origin)) throw new AppError(403,'A trusted Origin is required.');
-        req.headers['x-timenow-client-ip'] = req.socket.remoteAddress;
+        // Railway overwrites X-Real-IP at its HTTPS edge. Never trust X-Forwarded-For.
+        const edgeIP = req.headers['x-real-ip'];
+        req.headers['x-timenow-client-ip'] = trustRailwayProxy && typeof edgeIP === 'string' && isIP(edgeIP) ? edgeIP : req.socket.remoteAddress;
         return await authHandler(req,res);
       }
       const identity = await authenticate(auth,pool,req);
